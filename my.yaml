@@ -1,0 +1,12 @@
+job:
+  login:
+    - username: 'WeiboCN1@xx.com'
+    - password: 'xxxxxx'
+    - username: 'WeiboCN2@xxxx.com'
+    - password: 'xxxxxxx'
+    - username: 'WeiboCN3@xxx.com'
+    - password: 'xxxxxxxxx'
+    - username: 'WeiboCN4@xxx.com'
+    - password: 'xxxxxx'
+    - username: 'WeiboCN5@xxx.com'
+    - password: 'xxxxxx'
