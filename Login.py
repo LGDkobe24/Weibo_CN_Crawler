@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 import Parser
 
 import urllib2
@@ -15,7 +15,7 @@ import time
 import re
 import pymongo
 from pymongo import MongoClient
-import json
+import simplejson
 
 class Fetcher(object):
     def __init__(self, username=None, pwd=None, cookie_filename=None):
@@ -43,7 +43,9 @@ class Fetcher(object):
         vk = HTML.fromstring(login_page).xpath("//input[@name='vk']/@value")[0]
         return rand, passwd, vk
 
-    def login(self, username=None, pwd=None, cookie_filename=None, delay=0.0):
+    def login(self, username=None, pwd=None, cookie_filename=None, enable_proxy=False, delay=0.0):
+        self.pageCount = 0
+        self.enable_proxy = enable_proxy
         if self.username is None or self.pwd is None:
             self.username = username
             self.pwd = pwd
@@ -81,10 +83,20 @@ class Fetcher(object):
          
     def fetch(self, url):
         #print 'fetch url: ', url
-        req = urllib2.Request(url, headers=self.headers)
-        content = urllib2.urlopen(req).read()
-        #print 'unicode: ', content
+        self.pageCount = self.pageCount + 1
+        print "Parsing the ", self.pageCount ," th page."
         time.sleep(self.PageDelay)
+        req = urllib2.Request(url, headers=self.headers)
+        if self.enable_proxy:
+            req.set_proxy('127.0.0.1:8087','http')
+        content = urllib2.urlopen(req).read()
+        while etree.HTML(content).xpath('/html/body') is None:
+            print "Error occured opening web pages!"
+            print "Wait for ",5 * self.PageDelay," seconds to restart."
+            time.sleep(5 * self.PageDelay)
+            req = urllib2.Request(url, headers=self.headers)
+            content = urllib2.urlopen(req).read()
+        #print 'unicode: ', content
         return content
 
     def ErrorPage(self,tree):
@@ -106,9 +118,10 @@ class Fetcher(object):
         else:
             return True
 
-    def UserPreParser(self,url):
+    def UserPreParser(self,uid):
         #Crawls the main page of a user to get the uid and other information.
         #Stores information in mongo.
+        url = 'http://weibo.cn/' + str(uid)
         currTime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) #Current time.
         content = self.fetch(url)
         tree = etree.HTML(content)
@@ -128,7 +141,11 @@ class Fetcher(object):
         for i in range(len(UserIntroOne)):
             if len(UserIntroOne[i])>0:  UserIntroOne[i] = UserIntroOne[i].strip().replace(u"\xa0",'')
         UserName = re.sub(r'\[在线\]','',UserIntroOne[0])   #User nick name.
-        UserSex,UserLocation = UserIntroOne[2].split(u'/')  #Sex and City.
+        try:
+            UserSex,UserLocation = UserIntroOne[1].split(u'/')  #Sex and City.
+        except:
+            UserSex = ''
+            UserLocation = ''
         UserRank = UserIntros[0].xpath("./a[@href='/" + currID + "/urank']")[0].text  #User rank: xxx级.
         if len(UserIntros)>1:
             OtherIntros = []
@@ -151,11 +168,14 @@ class Fetcher(object):
                 "user_location":UserLocation,
                 "user_rank":UserRank,
                 "user_intro_short":OtherIntros,
-                "user_stat":Statistics,
+                "user_stat":[{"user_tweet_num":TweetCount},
+                             {"user_follow_num":FollowsNum},
+                             {"user_fans_num":FansNum},
+                             {"user_group_num":PubGroupNum}],
                 "crawlpage_time":currTime}
         #data = {"Basic":post,
         #        "Statistics":Statistics}
-        data = json.dumps(data)
+        #data = json.dumps(data)
         
         #client = MongoClient()
         #db = client.Sina_test
@@ -201,9 +221,15 @@ class Fetcher(object):
                 if '?' in UserMainPageLink:
                     UserMainPageLink,rubbish = UserMainPageLink.split("?")
                 UserName = leaf[1].text                     #User name(default:'unicode',encoded into 'utf-8').
+                #print UserName
+                try:
+                    rubbish,UserID=re.search('uid=[0-9]+',leaf[-1].attrib['href']).group().split('=')
+                except:
+                    UserID = ''
+                    pass
                 #if isinstance(UserName,unicode):
                 #    UserName = UserName.encode("utf-8")
-                NamePairRem.append([UserName,UserMainPageLink])
+                NamePairRem.append([uid,UserName,UserMainPageLink,UserID])
         return  NamePairRem
 
     def UserFansPageParser(self,uid):
@@ -214,6 +240,7 @@ class Fetcher(object):
         FinishFlag = False
         UserInfoRem = []
         pageIndex = 0
+        data = []
         while not FinishFlag:
             #Open page.
             content = self.fetch('http://weibo.cn/' + str(uid) + '/fans?page=' + str(int(pageIndex) + 1))
@@ -233,18 +260,32 @@ class Fetcher(object):
             subUserFansTree = UserFansTree.xpath("./body/div[@class='c']/table")
             for user in subUserFansTree:
                 UserLeaf = user.xpath("./tr/td")
-                UserMainPageLink,rubbish = UserLeaf[0].xpath("./a")[0].attrib['href'].split('?')    #Link of the main page of a fans.
-                #UserID = re.sub('http://weibo.cn/u/','',UserMainPageLink)                           #ID of fans.
                 UserName = UserLeaf[1].xpath("./a")[0].text                                         #User nick name(default:'unicode',encoded into 'utf-8').
-                UserInfoRem.append([UserName,UserMainPageLink])
+                #print UserName
+                try:
+                    UserMainPageLink,rubbish = UserLeaf[0].xpath("./a")[0].attrib['href'].split('?')    #Link of the main page of a fans.
+                except:
+                    UserMainPageLink = UserLeaf[0].xpath("./a")[0].attrib['href']
+                #UserID = re.sub('http://weibo.cn/u/','',UserMainPageLink)                          #ID of fans.
+                try:
+                    rubbish,UserID=re.search('uid=[0-9]+',UserLeaf[1].xpath("./a")[-1].attrib['href']).group().split('=')
+                except:
+                    UserID = ''
+                    pass
+                line = [uid]
+                line.append(UserName)
+                line.append(UserMainPageLink)
+                line.append(UserID)
+                UserInfoRem.append(line)
 
-            data = u"{"
-            for i in range(0,len(UserInfoRem)):
-                data = data + u'\'fans_nickname\'' + u":" + UserInfoRem[i][0] + u","
-                #data = data + '\'fans_id\'' + ":" + UserInfoRem[i][1] + ","
-                data = data + u'\'fans_link\'' + u":" + UserInfoRem[i][1] + u","
-            data = data[0:-1] + "}"
-            data = json.dumps(data)
+            #datatemp = "{user_id:" + str(uid) + ","
+
+            for line in UserInfoRem:
+            #    dataline = datatemp + 'fans_nickname' + ":" + UserInfoRem[i][0] + ","
+            #    dataline = dataline + 'fans_link' + ":" + UserInfoRem[i][1] + ","
+            #    dataline = dataline + 'fans_id' + ":" + UserInfoRem[i][2] + "}"
+                data.append(line)
+        #data = simplejson.loads(data)
         return data
 
     def UserContentPageParser(self,uid):
@@ -273,18 +314,80 @@ class Fetcher(object):
             #Start crawling current page.
             currTweetCount = UserContentTree.xpath("./body/div[@class='s']")
             currTweetTree = UserContentTree.xpath("./body/div[@class='c']")
-            UserContent.append(self.TweetParser(currTweetTree))
+            UserContent.append(self.TweetParser(currTweetTree,uid))
         return UserContent
 
-    '''
-    下面这段需要立刻重写,每一种情况的tweet需要专门写一个解析函数，否则本段代码太长，而且不一定写在本文件中
-    '''
-    def TweetParser(self,TweetTree):
+    def TweetParser(self,TweetTree,uid):
         #Parse one tweet by one call.
         #Called by UserContentPageParser()
         PageContent = []
         if len(TweetTree) > 2:
             TweetTree = TweetTree[0:-2]
             for tweetBranch in TweetTree:
-                PageContent.append(Parser.TweetContentParser(tweetBranch))
+                PageContent.append(Parser.TweetContentParser(tweetBranch,uid))
         return PageContent
+
+    def UserInfoParser(self, uid):
+        BarPair = {u"基本信息":u"BasicInfo",u"学习经历":u"StudyExp",u"工作经历":u"WorkExp",u"其他信息":u"OtherInfo"}
+        BasicInfoPair = {u"昵称":u"nickname",
+                        u"性别":u"sex",
+                        u"地区":u"region",
+                        u"生日":u"birthday",
+                        u"性取向":u"sexorient",
+                        u"感情状况":u"relationstat",
+                        u"简介":u"intro",
+                        u"标签":u"tags"}
+        OtherInfoPair = {u"互联网":u"internet",
+                         u"手机版":u"mobile"}
+        BasicInfoList = {u"nickname":'',
+                        u"sex":'',
+                        u"region":'',
+                        u"birthday":'',
+                        u"sexorient":'',
+                        u"relationstat":'',
+                        u"intro":'',
+                        u"tags":''}
+        WorkExpList = []
+        StudyExpList = []
+        OtherInfoList = {u"internet":'',
+                         u"mobile":''}
+        content = self.fetch('http://weibo.cn/' + str(uid) + '/info')
+        UserInfoTree = etree.HTML(content)
+        InfoClass = UserInfoTree.xpath("./body/div[@class='ps']/div[@class='tip']")
+        for title in InfoClass:
+            if title.text == u"基本信息":
+                InfoNode = title.xpath("./following-sibling::*")[0]
+                Contents = InfoNode.xpath("./text()")
+                ValidInfoCount = 0
+                for content in Contents:
+                    if len(content.strip().replace(u'\xa0','')) > 1:
+                        ValidInfoCount = ValidInfoCount + 1
+                ContentsHead = InfoNode.xpath("./a/text()")
+                for i in range(0,ValidInfoCount):
+                    key = ContentsHead[i]
+                    value = Contents[i].replace(u'\xa0','').replace(u':','')
+                    BasicInfoList[BasicInfoPair[key]] = value
+                #extract tags
+                if len(ContentsHead) > ValidInfoCount:
+                    key = u"标签"
+                    for i in range(ValidInfoCount + 1, len(ContentsHead) - 1):
+                        BasicInfoList[BasicInfoPair[key]] = BasicInfoList[BasicInfoPair[key]] + " " + ContentsHead[i]
+            elif len(title.xpath("./a")) != 0 and title.xpath("./a")[0].text == u"学习经历":
+                InfoNode = title.xpath("./following-sibling::*")[0]
+                Contents = InfoNode.xpath("./a|text()")
+                for i in range(0,len(Contents)):
+                    if type(Contents[i]) == lxml.etree._Element:
+                        StudyExpList.append(Contents[i].text.replace(u"\xa0",'') + ":" + Contents[i+1].replace(u"\xa0",''))
+            elif len(title.xpath("./a")) != 0 and title.xpath("./a")[0].text == u"工作经历":
+                InfoNode = title.xpath("./following-sibling::*")[0]
+                Contents = InfoNode.xpath("./a|text()")
+                for i in range(0,len(Contents)):
+                    if type(Contents[i]) == lxml.etree._Element:
+                        StudyExpList.append(Contents[i].text.replace(u"\xa0",'') + ":" + Contents[i+1].replace(u"\xa0",''))
+            elif title.text == u"其他信息":
+                pass    # null temporarily
+        data = {"user_id":uid,
+                "basic_info":BasicInfoList,
+                "word_exp":WorkExpList,
+                "study_exp":StudyExpList}
+        return data

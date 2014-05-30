@@ -1,11 +1,11 @@
-import yaml
+﻿import yaml
 import sys
 import os
 import json
 import re
 import time
 
-def TweetContentParser(TweetBranch):
+def TweetContentParser(TweetBranch,uid):
     '''
     data = {
         "MainTweet":
@@ -31,6 +31,7 @@ def TweetContentParser(TweetBranch):
        }
     '''
     post = {
+        "user_id":uid,
         "MainTweet":
         {
             "Content":'',
@@ -93,9 +94,17 @@ def TweetContentParser(TweetBranch):
             if ReTweetFlag and ReTweetReasonFlag:
                 #Get retweets.
                 RetTweet = TweetBranch[0].xpath("./span[@class='cmt']")
-                RetTweetSource_Name = RetTweet[0].xpath("./a")[0].text                              #Retweeted source info: nick name.
-                RetTweetSource_Link,rubbish = RetTweet[0].xpath("./a")[0].attrib['href'].split('?') #Retweeted source info: main page link.
-                RetTweetContents = TweetBranch[0].xpath("./span[@class='ctt']/text()")              #Retweeted content.
+                if len(RetTweet[0].xpath("./a")) != 0:
+                    RetTweetSource_Name = RetTweet[0].xpath("./a")[0].text                              #Retweeted source info: nick name.
+                    try:
+                        RetTweetSource_Link,rubbish = RetTweet[0].xpath("./a")[0].attrib['href'].split('?') #Retweeted source info: main page link.
+                    except:
+                        RetTweetSource_Link = RetTweet[0].xpath("./a")[0].attrib['href']
+                    RetTweetContents = TweetBranch[0].xpath("./span[@class='ctt']/text()")              #Retweeted content.
+                else:#Ereased tweet
+                    RetTweetSource_Name = ''                                                            #Retweeted source info: nick name.
+                    RetTweetSource_Link = ''                                                            #Retweeted source info: main page link.
+                    RetTweetContents = TweetBranch[0].xpath("./span[@class='ctt']/text()")              #Retweeted content.
                 RetTweetContent = ''
                 for content in RetTweetContents:
                     if content is not None and len(content)>0:
@@ -161,10 +170,19 @@ def TweetContentParser(TweetBranch):
     elif len(TweetBranch) == 3:
         #First div.
         subTweetBranch = TweetBranch[0].xpath("./span[@class='cmt']")
-        RetTweetSource_Name = subTweetBranch[0].xpath("./a")[0].text                                        #Retweeted source info: nick name.
-        RetTweetSource_Link,rubbish = subTweetBranch[0].xpath("./a")[0].attrib['href'].split('?')           #Retweeted source info: main page link.
-        subTweetBranch = TweetBranch[0].xpath("./span[@class='ctt']")[0]
-        RetTweetContents = subTweetBranch.xpath("./text()")                                                 #Retweeted content.
+        if len(subTweetBranch[0].xpath('./a')) != 0:
+            RetTweetSource_Name = subTweetBranch[0].xpath("./a")[0].text                                    #Retweeted source info: nick name.
+            try:
+                RetTweetSource_Link,rubbish = subTweetBranch[0].xpath("./a")[0].attrib['href'].split('?')       #Retweeted source info: main page link.
+            except:
+                RetTweetSource_Link = subTweetBranch[0].xpath("./a")[0].attrib['href']
+            subTweetBranch = TweetBranch[0].xpath("./span[@class='ctt']")[0]
+            RetTweetContents = subTweetBranch.xpath("./text()")                                             #Retweeted content.
+        else:
+            RetTweetSource_Name = ''
+            RetTweetSource_Link = ''
+            subTweetBranch = TweetBranch[0].xpath("./span[@class='ctt']")[0]
+            RetTweetContents = subTweetBranch.xpath("./text()")                                             #Retweeted content.
         RetTweetContent = ''
         for content in RetTweetContents:
             if content is not None and len(content)>0:
@@ -201,10 +219,7 @@ def TweetContentParser(TweetBranch):
         post["MainTweet"]["Praise"] = TweetPraise
         post["MainTweet"]["RetweetTimes"] = TweetRetweet
         post["MainTweet"]["Comment"] = TweetComment
-    #Defines data for return.
-
-    data = json.dumps(post)
-    return data
+    return post
 
 
 def TweetPraiseCommentRetweetParser(subTweetBranch):        #Tweet info parser.
